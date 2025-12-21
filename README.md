@@ -58,13 +58,16 @@ This creates a distributable Electron app in the `dist` folder.
 ## Usage
 
 1. **Start the app** - The transparent overlay window will appear at the bottom of your screen
-2. **Click "Start"** - You'll be prompted to share your screen/audio
-3. **Select "Share audio only"** or choose your screen with audio
-4. **Make a WhatsApp call** - The app will automatically:
-   - Capture the system audio
-   - Transcribe French speech in real-time
-   - Translate to formal English
-   - Display subtitles in the overlay
+2. **Click "Start"** - You'll be prompted twice:
+   - First: Select "Share audio" or your screen with audio (for incoming call audio)
+   - Second: Allow microphone access (for your voice)
+3. **Make a WhatsApp call** - The app will automatically:
+   - **Incoming (French → English)**: Capture system audio, transcribe French speech, translate to English, display subtitles
+   - **Outgoing (English → French)**: Capture your microphone, transcribe English, translate to French, speak it aloud via TTS
+4. **You'll see**:
+   - Main subtitle: What the French speaker said (translated to English)
+   - Bottom text: Your English speech and its French translation
+   - The French translation of your speech will be spoken aloud
 
 5. **Click "Stop"** when done
 

@@ -9,6 +9,20 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Transpile edge-tts package (it's TypeScript)
+  transpilePackages: ['edge-tts'],
+  // Webpack configuration to handle WebSocket dependencies
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      // Handle optional dependencies for WebSocket
+      config.externals = config.externals || [];
+      config.externals.push({
+        'bufferutil': 'commonjs bufferutil',
+        'utf-8-validate': 'commonjs utf-8-validate',
+      });
+    }
+    return config;
+  },
 }
 
 module.exports = nextConfig

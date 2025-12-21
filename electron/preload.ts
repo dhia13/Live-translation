@@ -12,6 +12,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setWindowHeight: (height: number) => ipcRenderer.invoke('set-window-height', height),
   setWindowOpacity: (opacity: number) => ipcRenderer.invoke('set-window-opacity', opacity),
   getWindowOpacity: () => ipcRenderer.invoke('get-window-opacity'),
+  // TTS audio routing
+  registerTTSStream: (streamId: string) => ipcRenderer.invoke('register-tts-stream', streamId),
+  unregisterTTSStream: () => ipcRenderer.invoke('unregister-tts-stream'),
+  getTTSAudioStream: () => ipcRenderer.invoke('get-tts-audio-stream'),
+  createVirtualMicrophone: () => ipcRenderer.invoke('create-virtual-microphone'),
 });
 
 // Type definitions for TypeScript
@@ -26,6 +31,10 @@ declare global {
       setWindowHeight: (height: number) => Promise<void>;
       setWindowOpacity: (opacity: number) => Promise<void>;
       getWindowOpacity: () => Promise<number>;
+      registerTTSStream: (streamId: string) => Promise<{ success: boolean }>;
+      unregisterTTSStream: () => Promise<void>;
+      getTTSAudioStream: () => Promise<{ streamId: string | null; registered: boolean; message: string }>;
+      createVirtualMicrophone: () => Promise<{ success: boolean; message?: string; sources?: Array<{ id: string; name: string }>; error?: string }>;
     };
   }
 }

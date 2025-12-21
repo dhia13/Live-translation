@@ -12,4 +12,9 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
     setWindowHeight: (height) => electron_1.ipcRenderer.invoke('set-window-height', height),
     setWindowOpacity: (opacity) => electron_1.ipcRenderer.invoke('set-window-opacity', opacity),
     getWindowOpacity: () => electron_1.ipcRenderer.invoke('get-window-opacity'),
+    // TTS audio routing
+    registerTTSStream: (streamId) => electron_1.ipcRenderer.invoke('register-tts-stream', streamId),
+    unregisterTTSStream: () => electron_1.ipcRenderer.invoke('unregister-tts-stream'),
+    getTTSAudioStream: () => electron_1.ipcRenderer.invoke('get-tts-audio-stream'),
+    createVirtualMicrophone: () => electron_1.ipcRenderer.invoke('create-virtual-microphone'),
 });
