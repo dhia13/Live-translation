@@ -1,12 +1,10 @@
 export interface ElectronAPI {
-  getApiKeys: () => Promise<{ deepgram: string; deepl: string }>;
-  setApiKeys: (keys: { deepgram?: string; deepl?: string }) => Promise<{ success: boolean }>;
-  minimizeWindow: () => Promise<void>;
-  maximizeWindow: () => Promise<void>;
-  closeWindow: () => Promise<void>;
-  setWindowHeight: (height: number) => Promise<void>;
-  setWindowOpacity: (opacity: number) => Promise<void>;
-  getWindowOpacity: () => Promise<number>;
+  onTranslationUpdate: (callback: (text: string) => void) => void;
+  removeListeners: () => void;
+  transcribeWithWhisper: (audioData: Float32Array | ArrayBuffer | number[], options?: { language?: string; translate?: boolean }) => Promise<{ success: boolean; text?: string; error?: string }>;
+  testWhisperTranscription: () => Promise<{ success: boolean; text?: string; error?: string; message?: string }>;
+  sendAudioChunk: (buffer: Float32Array) => void;
+  onWhisperText: (callback: (text: string) => void) => (() => void);
 }
 
 declare global {

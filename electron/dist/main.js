@@ -34,96 +34,125 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
+const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-let mainWindow = null;
-// Better dev mode detection - check if we're running from source or built
+const smart_whisper_1 = require("smart-whisper");
+// --- ENVIRONMENT SETUP ---
 const isDev = process.env.NODE_ENV === 'development' || !electron_1.app.isPackaged;
-// Store TTS stream ID for routing (moved outside createWindow to be accessible)
-let ttsStreamId = null;
-let ttsStreamWebContents = null;
-// Enable system audio loopback for macOS (if applicable)
-// This allows capturing system audio without external drivers
+// --- WHISPER PATHS ---
+const modelPath = isDev
+    ? path.join(process.cwd(), 'resources', 'models', 'ggml-base.bin')
+    : path.join(process.resourcesPath, 'models', 'ggml-base.bin');
+if (process.platform === 'win32') {
+    const releasePath = path.join(process.cwd(), 'node_modules', 'smart-whisper', 'build', 'Release');
+    process.env.PATH = `${releasePath};${process.env.PATH}`;
+}
+if (process.platform === 'win32') {
+    // This tells OpenVINO/Intel runtimes to ignore the GPU device
+    process.env.OPENVINO_DEVICE = 'CPU';
+    // Optional: Force the backend to stay away from the GPU
+    process.env.GGML_OPENCL_PLATFORM = '0';
+}
+// Whisper instance (loaded once, kept in memory)
+let whisperInstance = null;
+let isModelLoading = false;
+let modelLoadPromise = null;
+// Initialize Whisper model
+async function initializeWhisper() {
+    if (whisperInstance) {
+        return; // Already loaded
+    }
+    if (isModelLoading && modelLoadPromise) {
+        return modelLoadPromise; // Wait for ongoing load
+    }
+    isModelLoading = true;
+    modelLoadPromise = (async () => {
+        try {
+            if (!fs.existsSync(modelPath)) {
+                throw new Error(`Model not found at: ${modelPath}`);
+            }
+            console.log(`[Whisper] Loading model from: ${modelPath}`);
+            whisperInstance = new smart_whisper_1.Whisper(modelPath, {
+                gpu: false, // Turn this off for now to stop the crashing
+                offload: 0
+            });
+            console.log(`[Whisper] Model loaded successfully!`);
+        }
+        catch (error) {
+            console.error(`[Whisper] Failed to load model:`, error.message);
+            throw error;
+        }
+        finally {
+            isModelLoading = false;
+        }
+    })();
+    return modelLoadPromise;
+}
+console.log("📂 Model path:", modelPath);
+// --- WINDOW MANAGEMENT ---
+let mainWindow = null;
 if (process.platform === 'darwin') {
-    // Enable macOS system audio loopback (macOS 13+)
     electron_1.app.commandLine.appendSwitch('enable-features', 'MacLoopbackAudioForScreenShare,MacSckSystemAudioLoopbackOverride');
 }
 function createWindow() {
-    // Get screen dimensions
     const { screen } = require('electron');
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width, height } = primaryDisplay.workAreaSize;
-    // Determine preload path
     const preloadPath = path.join(__dirname, 'preload.js');
-    // Calculate window height - should accommodate subtitle area + modal if needed
-    // Subtitle area is ~140px, modal can be up to ~400px, so we'll use a larger default
-    const windowHeight = Math.max(140, 500); // At least subtitle height, but allow for modal
-    const maxWidth = Math.floor(width * 0.7); // 70% of screen width
+    const windowHeight = Math.max(140, 500);
+    const maxWidth = Math.floor(width * 0.7);
     mainWindow = new electron_1.BrowserWindow({
         width: maxWidth,
         height: windowHeight,
-        x: (width - maxWidth) / 2, // Center horizontally
-        y: height - windowHeight, // Position at bottom of screen
-        minWidth: 400,
-        maxWidth: maxWidth, // Limit to 70% of screen - enforced in Electron
-        minHeight: 140, // Minimum height for subtitle area
-        transparent: true, // Transparent window
-        frame: false, // Remove title bar/header
-        hasShadow: false, // No shadow for transparent windows
-        alwaysOnTop: true,
+        x: (width - maxWidth) / 2,
+        y: height - windowHeight,
+        transparent: true,
+        frame: true,
+        hasShadow: false,
+        alwaysOnTop: false,
         skipTaskbar: false,
-        resizable: true, // Enable resizing from borders
-        movable: true, // Enable moving
+        resizable: true,
+        movable: true,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
             preload: preloadPath,
-            webSecurity: false, // Required for mediaDevices access
+            webSecurity: false,
         },
     });
-    // TTS stream ID is stored at module level (declared above)
-    // Configure display media request handler for automatic audio loopback
+    // Configure display media request handler
     electron_1.session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
         try {
             console.log('Display media request received:', request);
-            // Get available desktop sources to provide a valid video source
             const { desktopCapturer } = require('electron');
             const sources = await desktopCapturer.getSources({
                 types: ['screen'],
-                thumbnailSize: { width: 1, height: 1 } // Minimal thumbnail since we don't use it
+                thumbnailSize: { width: 1, height: 1 }
             });
             console.log('Available desktop sources:', sources.length);
-            // Use the first available screen source for video (we'll stop it in the renderer)
             const videoSource = sources[0];
             if (videoSource) {
-                // Use loopback to capture system audio (includes TTS playing through speakers)
-                // On macOS 13+, this works natively without external drivers
-                // On Windows, this still requires system audio sharing permission
                 const response = {
-                    video: videoSource, // Provide a valid video source (required by Electron API)
-                    audio: 'loopback', // This captures system audio (incoming + TTS output)
+                    video: videoSource,
+                    audio: 'loopback',
                 };
                 console.log('✓ Providing display media with audio loopback');
                 callback(response);
             }
             else {
                 console.warn('No desktop sources available, letting browser handle it');
-                // Fallback: let the browser handle it naturally
                 callback({});
             }
         }
         catch (error) {
             console.error('Error in setDisplayMediaRequestHandler:', error);
-            console.error('Error details:', error.message, error.stack);
-            // If desktopCapturer fails (e.g., permission denied), let browser handle it
-            // The browser will show its own permission prompt
             console.log('Falling back to browser default behavior');
             callback({});
         }
     });
-    // Handle permission requests for media access
+    // Handle permission requests
     electron_1.session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
         console.log('Permission requested:', permission, 'Details:', details);
-        // Allow microphone and screen sharing permissions
         if (permission === 'media' || permission === 'display-capture') {
             console.log('✓ Allowing', permission, 'permission');
             callback(true);
@@ -133,12 +162,8 @@ function createWindow() {
             callback(false);
         }
     });
-    // Custom device permission handler for HID, serial, and USB devices
-    // Note: Microphone and camera permissions are handled by setPermissionRequestHandler
     electron_1.session.defaultSession.setDevicePermissionHandler((details) => {
         console.log('Device permission requested:', details.deviceType, 'for', details.origin);
-        // Allow HID, serial, and USB device access if needed
-        // Microphone and camera are handled by setPermissionRequestHandler above
         if (details.deviceType === 'hid' || details.deviceType === 'serial' || details.deviceType === 'usb') {
             console.log('✓ Allowing', details.deviceType, 'access');
             return true;
@@ -146,10 +171,9 @@ function createWindow() {
         console.log('✗ Denying', details.deviceType, 'access');
         return false;
     });
-    // Load the app - always use dev server in development
+    // Load the app
     const loadApp = async () => {
         if (isDev) {
-            // In development, always use the Next.js dev server
             const devUrl = 'http://localhost:3000';
             console.log('Loading from dev server:', devUrl);
             try {
@@ -157,7 +181,6 @@ function createWindow() {
             }
             catch (err) {
                 console.error('Failed to load dev server. Make sure Next.js is running:', err);
-                // Show error in window
                 mainWindow?.webContents.executeJavaScript(`
           document.body.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100vh; color: white; font-family: system-ui;">
             <div style="text-align: center;">
@@ -169,7 +192,6 @@ function createWindow() {
             }
         }
         else {
-            // In production, try to load from static export
             const prodPath = path.join(__dirname, '../out/index.html');
             const prodUrl = `file://${prodPath}`;
             console.log('Loading from production build:', prodUrl);
@@ -178,7 +200,6 @@ function createWindow() {
             }
             catch (err) {
                 console.error('Failed to load production build:', err);
-                // Fallback to dev server if available
                 console.log('Falling back to dev server...');
                 try {
                     await mainWindow?.loadURL('http://localhost:3000');
@@ -190,159 +211,215 @@ function createWindow() {
         }
     };
     loadApp();
-    // Enable DevTools for debugging
     mainWindow.webContents.openDevTools();
     mainWindow.on('closed', () => {
         mainWindow = null;
     });
 }
-// Simple in-memory storage for API keys (in production, use electron-store)
-let storedApiKeys = {};
-// IPC handlers for API keys
-electron_1.ipcMain.handle('get-api-keys', async () => {
-    // Check environment variables first, then stored keys
-    return {
-        deepgram: process.env.DEEPGRAM_API_KEY || storedApiKeys.deepgram || '',
-        deepl: process.env.DEEPL_API_KEY || storedApiKeys.deepl || '',
-    };
-});
-electron_1.ipcMain.handle('set-api-keys', async (event, keys) => {
-    // Store API keys in memory (persists for the session)
-    // In production, you should use electron-store for persistent storage
-    if (keys.deepgram !== undefined) {
-        storedApiKeys.deepgram = keys.deepgram;
-        process.env.DEEPGRAM_API_KEY = keys.deepgram;
-    }
-    if (keys.deepl !== undefined) {
-        storedApiKeys.deepl = keys.deepl;
-        process.env.DEEPL_API_KEY = keys.deepl;
-    }
-    return { success: true };
-});
-// Window control handlers
-electron_1.ipcMain.handle('window-minimize', () => {
-    mainWindow?.minimize();
-});
-electron_1.ipcMain.handle('window-maximize', () => {
-    if (mainWindow?.isMaximized()) {
-        mainWindow.unmaximize();
-    }
-    else {
-        mainWindow?.maximize();
-    }
-});
-electron_1.ipcMain.handle('window-close', () => {
-    mainWindow?.close();
-});
-// Handle dynamic window height updates from renderer
-electron_1.ipcMain.handle('set-window-height', (event, newHeight) => {
-    if (mainWindow) {
-        const currentBounds = mainWindow.getBounds();
-        const screenHeight = require('electron').screen.getPrimaryDisplay().workAreaSize.height;
-        const minHeight = 140;
-        const maxHeight = screenHeight - 50; // Leave some margin from top
-        // Clamp height between min and max
-        const clampedHeight = Math.max(minHeight, Math.min(maxHeight, newHeight));
-        // Only update height, preserve current position
-        mainWindow.setBounds({
-            ...currentBounds,
-            height: clampedHeight,
-            // Don't change Y position - let user control window position
-        });
-    }
-});
-// Handle window opacity changes
-electron_1.ipcMain.handle('set-window-opacity', (event, opacity) => {
-    if (mainWindow) {
-        // Clamp opacity between 0.1 and 1.0
-        const clampedOpacity = Math.max(0.1, Math.min(1.0, opacity));
-        mainWindow.setOpacity(clampedOpacity);
-    }
-});
-electron_1.ipcMain.handle('get-window-opacity', () => {
-    if (mainWindow) {
-        return mainWindow.getOpacity();
-    }
-    return 1.0;
-});
-// TTS stream registration for microphone routing
-electron_1.ipcMain.handle('register-tts-stream', async (event, streamId) => {
-    ttsStreamId = streamId;
-    ttsStreamWebContents = event.sender;
-    console.log('TTS stream registered:', streamId);
-    console.log('📢 Virtual Microphone: TTS stream is ready');
-    console.log('');
-    console.log('⚠️  IMPORTANT: Electron cannot expose MediaStream as system microphone');
-    console.log('   The TTS stream is available within this Electron app, but');
-    console.log('   other applications (WhatsApp, Zoom, etc.) cannot access it directly.');
-    console.log('');
-    console.log('   To make TTS available to other apps, you need:');
-    console.log('   Option 1: Virtual Audio Cable (External Software)');
-    console.log('     - Windows: Install VB-Audio Virtual Cable');
-    console.log('     - macOS: Install BlackHole');
-    console.log('     - Route TTS audio through the virtual cable');
-    console.log('');
-    console.log('   Option 2: Native Driver Module (Advanced)');
-    console.log('     - Create a C++ Node.js addon using WASAPI (Windows)');
-    console.log('     - This creates a true virtual microphone device');
-    console.log('     - Requires significant development effort');
-    console.log('');
-    console.log('   Current Status: TTS audio is routed to MediaStream');
-    console.log('   This stream can be used within Electron/web contexts only.');
-    return { success: true };
-});
-electron_1.ipcMain.handle('unregister-tts-stream', () => {
-    ttsStreamId = null;
-    ttsStreamWebContents = null;
-    console.log('TTS stream unregistered');
-});
-// Handle requests to get TTS audio stream
-electron_1.ipcMain.handle('get-tts-audio-stream', async () => {
-    // Return information about the TTS stream
-    return {
-        streamId: ttsStreamId,
-        registered: ttsStreamId !== null,
-        message: 'TTS stream is available in the renderer process'
-    };
-});
-// Create a virtual microphone using Electron's desktopCapturer
-// This will create a custom audio source that can be accessed via getUserMedia
-electron_1.ipcMain.handle('create-virtual-microphone', async () => {
+// --- WHISPER INTEGRATION ---
+// Main transcription function using smart-whisper
+async function transcribeWithWhisper(audioData, options = {}) {
     try {
-        const { desktopCapturer } = require('electron');
-        // Get available audio sources
-        const sources = await desktopCapturer.getSources({
-            types: ['screen', 'window'],
-            thumbnailSize: { width: 1, height: 1 }
+        // Ensure model is loaded
+        if (!whisperInstance) {
+            await initializeWhisper();
+        }
+        if (!whisperInstance) {
+            throw new Error('Whisper model failed to load');
+        }
+        // Ensure audio is normalized to -1 to 1 range
+        const normalizedAudio = new Float32Array(audioData.length);
+        for (let i = 0; i < audioData.length; i++) {
+            normalizedAudio[i] = Math.max(-1, Math.min(1, audioData[i]));
+        }
+        // Transcribe using smart-whisper
+        // Inside transcribeWithWhisper
+        const task = await whisperInstance.transcribe(normalizedAudio, {
+            language: options.language || 'en',
+            translate: options.translate || false,
+            n_threads: 4, // You can safely use more threads on CPU
+            format: 'simple',
+            // DO NOT include openvino_device here
         });
-        console.log('Available audio sources:', sources.length);
-        // Note: Electron's desktopCapturer can capture audio from specific windows/apps
-        // We can use this to create a virtual microphone source
-        // However, to make it appear as a system microphone, we need a virtual audio driver
+        // Get the result (result is a promise that resolves to an array)
+        const results = await task.result;
+        // Extract text from results array (each result has a 'text' property)
+        const transcription = results
+            .map((r) => r.text)
+            .join(' ')
+            .trim();
+        return transcription;
+    }
+    catch (error) {
+        console.error('[Whisper] Transcription error:', error.message);
+        throw error;
+    }
+}
+// --- IPC HANDLERS ---
+electron_1.ipcMain.handle('test-whisper-transcription', async (event) => {
+    try {
+        console.log("[Whisper Test] Starting...");
+        if (!fs.existsSync(modelPath)) {
+            return {
+                success: false,
+                error: `Model not found at: ${modelPath}`
+            };
+        }
+        // Ensure model is loaded
+        if (!whisperInstance) {
+            await initializeWhisper();
+        }
+        if (!whisperInstance) {
+            return {
+                success: false,
+                error: 'Failed to load Whisper model'
+            };
+        }
+        const testAudio = new Float32Array(16000);
+        const text = await transcribeWithWhisper(testAudio, { language: 'en' });
         return {
             success: true,
-            message: 'Virtual microphone source created',
-            sources: sources.map((s) => ({ id: s.id, name: s.name }))
+            text: text || '(silence detected)',
+            message: 'Whisper is working!'
         };
     }
     catch (error) {
-        console.error('Error creating virtual microphone:', error);
+        console.error('[Whisper Test] Error:', error.message);
         return {
             success: false,
             error: error.message
         };
     }
 });
-electron_1.app.whenReady().then(() => {
+electron_1.ipcMain.handle('transcribe-with-whisper', async (event, audioData, options) => {
+    try {
+        const float32Array = audioData instanceof Float32Array
+            ? audioData
+            : audioData instanceof ArrayBuffer
+                ? new Float32Array(audioData)
+                : Array.isArray(audioData)
+                    ? new Float32Array(audioData)
+                    : new Float32Array(Object.values(audioData));
+        if (float32Array.length === 0) {
+            return { success: false, error: 'Empty audio data' };
+        }
+        console.log(`[Whisper] Transcribing ${float32Array.length} samples (${(float32Array.length / 16000).toFixed(1)}s)`);
+        const text = await transcribeWithWhisper(float32Array, {
+            language: options?.language || 'en',
+            translate: options?.translate !== false,
+            threads: 4
+        });
+        return { success: true, text: text };
+    }
+    catch (error) {
+        console.error('🛑 Transcription failed:', error.message);
+        return { success: false, error: error.message };
+    }
+});
+// Streaming transcription with queue
+let audioBufferAccumulator = new Float32Array(0);
+const CHUNK_THRESHOLD = 16000 * 3;
+let isTranscribing = false;
+const transcriptionQueue = [];
+async function processTranscriptionQueue() {
+    if (isTranscribing || transcriptionQueue.length === 0) {
+        return;
+    }
+    isTranscribing = true;
+    const { buffer, event } = transcriptionQueue.shift();
+    try {
+        // Check if audio has actual signal (not just silence)
+        const maxAmplitude = Math.max(...Array.from(buffer.map(Math.abs)));
+        if (maxAmplitude < 0.01) {
+            console.log('[Whisper] Skipping silent audio chunk');
+            isTranscribing = false;
+            processTranscriptionQueue(); // Process next in queue
+            return;
+        }
+        console.log(`[Whisper] Processing queue item: ${buffer.length} samples (${(buffer.length / 16000).toFixed(1)}s), queue size: ${transcriptionQueue.length}`);
+        const text = await transcribeWithWhisper(buffer, {
+            language: 'en',
+            translate: true
+        });
+        console.log(`[Whisper] Transcription result: "${text}"`);
+        if (text && text.trim() && text.trim().toLowerCase() !== '[blank_audio]') {
+            event.sender.send('whisper-text', text.trim());
+        }
+    }
+    catch (error) {
+        console.error("❌ Transcription Error:", error.message);
+    }
+    finally {
+        isTranscribing = false;
+        // Process next item in queue
+        processTranscriptionQueue();
+    }
+}
+electron_1.ipcMain.on('stream-audio-to-whisper', async (event, audioChunk) => {
+    try {
+        const newBuffer = new Float32Array(audioBufferAccumulator.length + audioChunk.length);
+        newBuffer.set(audioBufferAccumulator);
+        newBuffer.set(audioChunk, audioBufferAccumulator.length);
+        audioBufferAccumulator = newBuffer;
+        if (audioBufferAccumulator.length >= CHUNK_THRESHOLD) {
+            const processingBuffer = audioBufferAccumulator;
+            audioBufferAccumulator = new Float32Array(0);
+            // Add to queue instead of processing immediately
+            transcriptionQueue.push({ buffer: processingBuffer, event });
+            processTranscriptionQueue();
+        }
+    }
+    catch (error) {
+        console.error("❌ Streaming Error:", error);
+    }
+});
+// --- APP LIFECYCLE ---
+electron_1.app.whenReady().then(async () => {
     createWindow();
     electron_1.app.on('activate', () => {
         if (electron_1.BrowserWindow.getAllWindows().length === 0) {
             createWindow();
         }
     });
+    // Initialize Whisper model on startup
+    setTimeout(async () => {
+        console.log("\n" + "=".repeat(70));
+        console.log("🔍 Whisper Health Check");
+        console.log("=".repeat(70));
+        if (fs.existsSync(modelPath)) {
+            console.log("✅ Model file found:", modelPath);
+            try {
+                await initializeWhisper();
+                console.log("🚀 WHISPER READY - Model loaded in memory!");
+                console.log("💡 Using smart-whisper Node.js bindings (no external process needed)");
+            }
+            catch (error) {
+                console.error("❌ Failed to load Whisper model:", error.message);
+                console.error("💡 Make sure the model file is valid");
+            }
+        }
+        else {
+            console.error("❌ Model file not found:", modelPath);
+            console.error("💡 Download from: https://huggingface.co/ggerganov/whisper.cpp");
+        }
+        console.log("=".repeat(70) + "\n");
+    }, 1500);
 });
 electron_1.app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         electron_1.app.quit();
+    }
+});
+electron_1.app.on('before-quit', async () => {
+    // Clean up Whisper instance
+    if (whisperInstance) {
+        try {
+            console.log('[Whisper] Freeing model resources...');
+            await whisperInstance.free();
+            console.log('[Whisper] Model resources freed');
+        }
+        catch (error) {
+            console.warn('[Whisper] Error freeing resources:', error.message);
+        }
     }
 });
