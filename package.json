@@ -28,7 +28,7 @@
         "next": "^15.0.0",
         "react": "^18.3.1",
         "react-dom": "^18.3.1",
-        "smart-whisper": "*",
+        "smart-whisper": "^0.8.1",
         "wavefile": "^11.0.0"
     },
     "devDependencies": {
