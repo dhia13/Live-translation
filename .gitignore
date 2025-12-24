@@ -43,6 +43,6 @@ Thumbs.db
 
 # Models (if you want to avoid committing large files)
 whisper/whisper.cpp/models/*.bin
-# But keep the one in resources
-!resources/models/*.bin
+resources/models/*.bin
+resources/models/*.xml
 ```
