@@ -11,6 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 import statistics
 from asyncio import Queue
+from deep_translator import GoogleTranslator
+from functools import lru_cache
 
 # --- CONFIGURATION ---
 MODEL_SIZE = "small"
@@ -25,7 +27,7 @@ SEND_STATS_EVERY = 10
 # ---------------------
 
 print("=" * 60)
-print("🎙️  Live Transcription Server - Whisper AI (FIXED)")
+print("🎙️  Live Transcription & Translation Server - Whisper AI")
 print("=" * 60)
 print(f"Model: {MODEL_SIZE}")
 print(f"Device: {DEVICE}")
@@ -63,6 +65,80 @@ sio.attach(app)
 # Thread pool
 executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_JOBS)
 
+# Translation cache to avoid re-translating same phrases
+translation_cache = {}
+
+# Language code mapping for Whisper to Google Translate
+LANGUAGE_MAP = {
+    'en': 'en',
+    'fr': 'fr',
+    'es': 'es',
+    'de': 'de',
+    'it': 'it',
+    'pt': 'pt',
+    'ru': 'ru',
+    'ja': 'ja',
+    'ko': 'ko',
+    'zh': 'zh-CN',
+    'ar': 'ar',
+    'hi': 'hi',
+    'nl': 'nl',
+    'pl': 'pl',
+    'tr': 'tr',
+}
+
+def get_language_icon(lang_code):
+    """Get flag emoji for language"""
+    icons = {
+        'en': '🇬🇧',
+        'fr': '🇫🇷',
+        'es': '🇪🇸',
+        'de': '🇩🇪',
+        'it': '🇮🇹',
+        'pt': '🇵🇹',
+        'ru': '🇷🇺',
+        'ja': '🇯🇵',
+        'ko': '🇰🇷',
+        'zh': '🇨🇳',
+        'ar': '🇸🇦',
+        'hi': '🇮🇳',
+        'nl': '🇳🇱',
+        'pl': '🇵🇱',
+        'tr': '🇹🇷',
+    }
+    return icons.get(lang_code, '🌐')
+
+def translate_text(text, source_lang, target_lang):
+    """Translate text using Google Translator with caching"""
+    try:
+        # Don't translate if source and target are the same
+        if source_lang == target_lang:
+            return text
+        
+        # Check cache
+        cache_key = f"{source_lang}:{target_lang}:{text}"
+        if cache_key in translation_cache:
+            return translation_cache[cache_key]
+        
+        # Map language codes
+        source = LANGUAGE_MAP.get(source_lang, source_lang)
+        target = LANGUAGE_MAP.get(target_lang, target_lang)
+        
+        # Translate
+        translator = GoogleTranslator(source=source, target=target)
+        translated = translator.translate(text)
+        
+        # Cache result (limit cache size)
+        if len(translation_cache) > 1000:
+            translation_cache.clear()
+        translation_cache[cache_key] = translated
+        
+        return translated
+        
+    except Exception as e:
+        print(f"❌ Translation error: {e}")
+        return text  # Return original text if translation fails
+
 # Client state
 client_buffers = {}
 
@@ -80,7 +156,11 @@ async def connect(sid, environ):
         'queue_task': None,
         'latencies': [],
         'chunk_sizes': [],
-        'dropped_chunks': 0
+        'dropped_chunks': 0,
+        # Translation settings
+        'source_language': None,  # Auto-detect or specified
+        'target_language': None,  # Translation target
+        'translation_enabled': False
     }
     print(f"✅ Client connected: {sid[:8]}")
     
@@ -94,6 +174,32 @@ async def connect(sid, environ):
     # Start queue processor
     client_buffers[sid]['queue_task'] = asyncio.create_task(process_queue(sid))
 
+@sio.event
+async def set_translation(sid, data):
+    """Configure translation settings for client"""
+    if sid not in client_buffers:
+        return
+    
+    buffer = client_buffers[sid]
+    
+    source_lang = data.get('source_language')  # e.g., 'fr', 'en', or None for auto-detect
+    target_lang = data.get('target_language')  # e.g., 'en', 'fr'
+    
+    buffer['source_language'] = source_lang
+    buffer['target_language'] = target_lang
+    buffer['translation_enabled'] = target_lang is not None
+    
+    source_icon = get_language_icon(source_lang) if source_lang else '🔍'
+    target_icon = get_language_icon(target_lang) if target_lang else ''
+    
+    print(f"   🌐 [{sid[:8]}] Translation: {source_icon} {source_lang or 'auto'} → {target_icon} {target_lang or 'none'}")
+    
+    await sio.emit('translation_config', {
+        'source_language': source_lang,
+        'target_language': target_lang,
+        'enabled': buffer['translation_enabled']
+    }, room=sid)
+
 def decode_audio_chunk(data, current_format):
     """Decode incoming audio data"""
     try:
@@ -104,7 +210,7 @@ def decode_audio_chunk(data, current_format):
             header = audio_bytes[:4]
             if header == b'RIFF':
                 current_format = 'wav'
-            elif header == b'\x1a\x45\xdf\xa3':
+            elif header == b'\x1a\xE5\xdf\xa3':
                 current_format = 'webm'
             else:
                 current_format = 'raw_pcm'
@@ -198,22 +304,22 @@ def detect_hallucination(text: str) -> bool:
     
     return False
 
-def process_audio(audio_samples):
+def process_audio(audio_samples, source_language=None):
     """Run Whisper inference with enhanced anti-hallucination"""
     try:
         # Check minimum duration
         if len(audio_samples) < SAMPLE_RATE * 0.5:
-            return None
+            return None, None
         
         # Check if audio is too quiet (likely silence)
         rms = np.sqrt(np.mean(audio_samples**2))
         if rms < 0.01:
-            return None
+            return None, None
         
         # Transcribe with quality settings
         segments, info = model.transcribe(
             audio_samples,
-            language=None,
+            language=source_language,  # Use specified language or auto-detect
             beam_size=5,
             best_of=5,
             temperature=0.0,
@@ -236,13 +342,15 @@ def process_audio(audio_samples):
         
         # Enhanced hallucination detection
         if detect_hallucination(text):
-            return None
+            return None, None
         
-        return text
+        # Return text and detected language
+        detected_lang = info.language if hasattr(info, 'language') else None
+        return text, detected_lang
         
     except Exception as e:
         print(f"❌ Inference error: {e}")
-        return None
+        return None, None
 
 async def process_queue(sid):
     """Process audio chunks from queue"""
@@ -295,7 +403,16 @@ async def process_queue(sid):
                 # Run inference
                 start_time = time.time()
                 loop = asyncio.get_running_loop()
-                text = await loop.run_in_executor(executor, process_audio, audio_to_process)
+                
+                # Get transcription with detected language
+                result = await loop.run_in_executor(
+                    executor, 
+                    process_audio, 
+                    audio_to_process,
+                    buffer['source_language']
+                )
+                text, detected_lang = result
+                
                 inference_time = time.time() - start_time
                 
                 # Track latency
@@ -306,16 +423,49 @@ async def process_queue(sid):
                     if text:
                         buffer['total_processed'] += 1
                         
-                        # Detect language from first word
-                        lang_icon = "🇫🇷" if any(c in "àâäèéêëîïôùûüÿçœæ" for c in text.lower()) else "🇬🇧"
+                        # Use detected language or specified source language
+                        source_lang = detected_lang or buffer['source_language'] or 'unknown'
                         
-                        print(f"   {lang_icon} [{sid[:8]}] ({inference_time:.1f}s) {text[:80]}{'...' if len(text) > 80 else ''}")
+                        # Translate if enabled
+                        translated_text = None
+                        translation_time = 0
                         
-                        await sio.emit('transcription', {
+                        if buffer['translation_enabled'] and buffer['target_language']:
+                            trans_start = time.time()
+                            translated_text = await loop.run_in_executor(
+                                executor,
+                                translate_text,
+                                text,
+                                source_lang,
+                                buffer['target_language']
+                            )
+                            translation_time = time.time() - trans_start
+                        
+                        # Get language icons
+                        source_icon = get_language_icon(source_lang)
+                        target_icon = get_language_icon(buffer['target_language']) if buffer['translation_enabled'] else ''
+                        
+                        # Log output
+                        total_time = inference_time + translation_time
+                        log_msg = f"   {source_icon} [{sid[:8]}] ({total_time:.1f}s) {text[:60]}{'...' if len(text) > 60 else ''}"
+                        if translated_text:
+                            log_msg += f"\n   {target_icon} → {translated_text[:60]}{'...' if len(translated_text) > 60 else ''}"
+                        print(log_msg)
+                        
+                        # Send to client
+                        response = {
                             'text': text,
+                            'language': source_lang,
                             'inference_time': inference_time,
                             'count': buffer['total_processed']
-                        }, room=sid)
+                        }
+                        
+                        if translated_text:
+                            response['translated_text'] = translated_text
+                            response['target_language'] = buffer['target_language']
+                            response['translation_time'] = translation_time
+                        
+                        await sio.emit('transcription', response, room=sid)
                     else:
                         print(f"   🔇 [{sid[:8]}] Filtered (RMS: {rms:.4f})")
                     
@@ -373,17 +523,42 @@ async def stop_recording(sid):
     # Process remaining audio
     if len(buffer['audio']) > SAMPLE_RATE * 0.5:
         loop = asyncio.get_running_loop()
-        text = await loop.run_in_executor(executor, process_audio, buffer['audio'])
+        result = await loop.run_in_executor(
+            executor, 
+            process_audio, 
+            buffer['audio'],
+            buffer['source_language']
+        )
+        text, detected_lang = result
         
         if text and buffer['connected'] and not detect_hallucination(text):
             buffer['total_processed'] += 1
+            
+            # Translate final chunk if enabled
+            translated_text = None
+            if buffer['translation_enabled'] and buffer['target_language']:
+                source_lang = detected_lang or buffer['source_language'] or 'unknown'
+                translated_text = await loop.run_in_executor(
+                    executor,
+                    translate_text,
+                    text,
+                    source_lang,
+                    buffer['target_language']
+                )
+            
             print(f"   🏁 [{sid[:8]}] Final: {text[:80]}{'...' if len(text) > 80 else ''}")
             
-            await sio.emit('transcription', {
+            response = {
                 'text': text,
                 'final': True,
                 'count': buffer['total_processed']
-            }, room=sid)
+            }
+            
+            if translated_text:
+                response['translated_text'] = translated_text
+                response['target_language'] = buffer['target_language']
+            
+            await sio.emit('transcription', response, room=sid)
     
     # Clear buffer
     buffer['audio'] = np.array([], dtype=np.float32)
