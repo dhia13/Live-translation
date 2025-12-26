@@ -1,5 +1,3 @@
-'use client';
-
 import { useEffect, useRef, useState } from 'react';
 
 interface Caption {
@@ -8,342 +6,221 @@ interface Caption {
     id: number;
 }
 
+// Global Socket.IO connection singleton
+let globalSocket: any = null;
+let socketUsers = 0;
+
 export default function SubtitleOverlay() {
     const [currentText, setCurrentText] = useState('');
     const [captionHistory, setCaptionHistory] = useState<Caption[]>([]);
     const [isLive, setIsLive] = useState(false);
-    const [isTranscribing, setIsTranscribing] = useState(false);
-    const [selectedFile, setSelectedFile] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [status, setStatus] = useState<string>('');
+    const [status, setStatus] = useState<string>('Disconnected');
+    const [micLevel, setMicLevel] = useState(0);
+
     const socketRef = useRef<any>(null);
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-    const audioChunksRef = useRef<Blob[]>([]);
+    const streamsRef = useRef<MediaStream[]>([]);
     const captionIdRef = useRef(0);
+    const animationIdRef = useRef<number | null>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
 
     useEffect(() => {
-        console.log('Component mounted');
+        socketUsers++;
 
-        // Setup for file transcription
-        if (typeof window !== 'undefined' && window.electronAPI) {
-            console.log('Electron API available');
-        }
+        const initSocket = async () => {
+            try {
+                if (!globalSocket) {
+                    const { io } = await import('socket.io-client');
+                    globalSocket = io('http://127.0.0.1:5000', {
+                        transports: ['websocket'],
+                        reconnection: true,
+                    });
+                }
 
-        // Cleanup on unmount
-        return () => {
-            if (socketRef.current) {
-                socketRef.current.disconnect();
+                if (!globalSocket._handlersSet) {
+                    globalSocket.on('connect', () => setStatus('Connected'));
+                    globalSocket.on('disconnect', () => setStatus('Disconnected'));
+
+                    // Matches the 'translation' or 'transcription' event from Python
+                    globalSocket.on('translation', (data: { text: string }) => {
+                        if (data.text.trim()) {
+                            setCurrentText(data.text);
+                            const newCap = {
+                                text: data.text,
+                                timestamp: Date.now(),
+                                id: captionIdRef.current++
+                            };
+                            setCaptionHistory(prev => [...prev, newCap].slice(-4));
+                        }
+                    });
+
+                    globalSocket.on('error', (err: any) => setError(err.message));
+                    globalSocket._handlersSet = true;
+                }
+                socketRef.current = globalSocket;
+            } catch (err) {
+                setError('Socket initialization failed');
             }
-            if (audioContextRef.current) {
-                audioContextRef.current.close();
+        };
+
+        initSocket();
+
+        return () => {
+            socketUsers--;
+            if (socketUsers <= 0 && globalSocket) {
+                globalSocket.disconnect();
+                globalSocket = null;
             }
         };
     }, []);
 
-    const handleSelectFile = async () => {
-        try {
-            const path = await window.electronAPI?.selectAudioFile();
-            if (path) {
-                setSelectedFile(path);
-                setError(null);
-            }
-        } catch (err) {
-            console.error('Error selecting file:', err);
-            setError('Failed to select file');
-        }
+    const blobToBase64 = (blob: Blob): Promise<string> => {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+            reader.readAsDataURL(blob);
+        });
     };
 
-    const handleTranscribe = async () => {
-        if (!selectedFile) return;
-
-        setCurrentText('Transcribing...');
-        setIsTranscribing(true);
-        setError(null);
-
+    const startLive = async () => {
         try {
-            const result = await window.electronAPI?.transcribeAudio(selectedFile);
-
-            if (result?.success) {
-                setCurrentText(result.text || 'No text returned');
-
-                const newCaption: Caption = {
-                    text: result.text || '',
-                    timestamp: Date.now(),
-                    id: captionIdRef.current++
-                };
-                setCaptionHistory(prev => [...prev, newCaption].slice(-5));
-            } else {
-                setError(result?.error || 'Transcription failed');
-                setCurrentText('');
-            }
-        } catch (err: any) {
-            setError(err.message || 'Unknown error');
-            setCurrentText('');
-        } finally {
-            setIsTranscribing(false);
-        }
-    };
-
-    const startLiveCaption = async () => {
-        try {
-            setCurrentText('Requesting microphone access...');
-            setError(null);
-
-            // Get microphone access
             const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    channelCount: 1,
-                    sampleRate: 16000,
-                    echoCancellation: true,
-                    noiseSuppression: true
-                }
+                audio: { channelCount: 1, sampleRate: 16000 }
             });
+            streamsRef.current = [stream];
 
-            console.log('Microphone access granted');
-            setCurrentText('Connecting to server...');
+            // 1. Start Audio Analysis for UI
+            const ctx = new AudioContext();
+            audioContextRef.current = ctx;
+            const source = ctx.createMediaStreamSource(stream);
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-            // Import socket.io-client dynamically
-            const { io } = await import('socket.io-client');
+            const draw = () => {
+                analyser.getByteFrequencyData(dataArray);
+                const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+                setMicLevel(Math.min(average * 1.5, 100));
+                animationIdRef.current = requestAnimationFrame(draw);
+            };
+            draw();
 
-            // Connect to Socket.IO server
-            const socket = io('http://127.0.0.1:5000', {
-                transports: ['websocket'],
-                reconnection: true
-            });
-            socketRef.current = socket;
+            // 2. Start Recording Chunks
+            const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            mediaRecorderRef.current = recorder;
 
-            socket.on('connect', () => {
-                console.log('✓ Connected to Whisper server');
-                setStatus('Connected');
-                setCurrentText('Listening...');
-                socket.emit('start_listening');
-            });
-
-            socket.on('transcription', (data: any) => {
-                console.log('📝 Transcription:', data.text);
-                setCurrentText(data.text);
-
-                const newCaption: Caption = {
-                    text: data.text,
-                    timestamp: Date.now(),
-                    id: captionIdRef.current++
-                };
-                setCaptionHistory(prev => [...prev, newCaption].slice(-5));
-            });
-
-            socket.on('status', (data: any) => {
-                console.log('Server status:', data.message);
-                setStatus(data.message);
-            });
-
-            socket.on('error', (data: any) => {
-                console.error('Server error:', data.message);
-                setError(data.message);
-            });
-
-            socket.on('disconnect', () => {
-                console.log('Disconnected from server');
-                setStatus('Disconnected');
-            });
-
-            // Create media recorder (WebM format)
-            const mediaRecorder = new MediaRecorder(stream, {
-                mimeType: 'audio/webm;codecs=opus'
-            });
-            mediaRecorderRef.current = mediaRecorder;
-            audioChunksRef.current = [];
-
-            // Handle audio data
-            mediaRecorder.ondataavailable = async (event) => {
-                if (event.data.size > 0) {
-                    console.log('Audio chunk received:', event.data.size, 'bytes');
-
-                    try {
-                        // Convert WebM to WAV using Web Audio API
-                        const arrayBuffer = await event.data.arrayBuffer();
-                        const audioContext = new AudioContext({ sampleRate: 16000 });
-                        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-
-                        // Get mono channel
-                        const float32Data = audioBuffer.getChannelData(0);
-
-                        // Convert Float32Array to base64
-                        const uint8Array = new Uint8Array(float32Data.buffer);
-                        const base64Audio = btoa(String.fromCharCode(...uint8Array));
-
-                        console.log('Sending audio to server:', float32Data.length, 'samples');
-
-                        // Send to server
-                        if (socket.connected) {
-                            socket.emit('audio_chunk', { audio: base64Audio });
-                        }
-
-                        audioContext.close();
-                    } catch (err) {
-                        console.error('Error processing audio:', err);
-                    }
+            recorder.ondataavailable = async (e) => {
+                if (e.data.size > 0 && socketRef.current?.connected) {
+                    const base64 = await blobToBase64(e.data);
+                    // Send to Python server
+                    socketRef.current.emit('audio_chunk', base64);
                 }
             };
 
-            mediaRecorder.onerror = (event: any) => {
-                console.error('MediaRecorder error:', event.error);
-                setError('Recording error: ' + event.error);
-            };
-
-            // Start recording in 1-second chunks
-            console.log('Starting audio recording...');
-            mediaRecorder.start(1000); // Get data every 1 second
+            // Send a chunk every 1 second (optimal for Whisper GPU context)
+            recorder.start(1000);
             setIsLive(true);
-
-        } catch (err: any) {
-            console.error('Failed to start live caption:', err);
-            setError(err.message || 'Failed to access microphone');
-            setCurrentText('');
-            setIsLive(false);
+            setError(null);
+        } catch (err) {
+            setError('Microphone access denied');
         }
     };
 
-    const stopLiveCaption = () => {
-        console.log('Stopping live caption...');
-
-        // Stop media recorder
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-            mediaRecorderRef.current.stop();
-            mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
-            mediaRecorderRef.current = null;
-        }
-
-        // Disconnect socket
-        if (socketRef.current) {
-            socketRef.current.emit('stop_listening');
-            socketRef.current.disconnect();
-            socketRef.current = null;
-        }
-
+    const stopLive = () => {
+        mediaRecorderRef.current?.stop();
+        if (animationIdRef.current) cancelAnimationFrame(animationIdRef.current);
+        audioContextRef.current?.close();
+        streamsRef.current.forEach(s => s.getTracks().forEach(t => t.stop()));
         setIsLive(false);
-        setCurrentText('');
-        setStatus('');
-        audioChunksRef.current = [];
-    };
-
-    const handleToggleLive = async () => {
-        if (isLive) {
-            stopLiveCaption();
-        } else {
-            await startLiveCaption();
-        }
+        setMicLevel(0);
     };
 
     return (
-        <div className="fixed inset-0 bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex flex-col items-center justify-center p-4">
-            {error && (
-                <div className="absolute top-8 left-1/2 transform -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-lg shadow-lg z-50 max-w-md">
-                    <div className="flex items-center gap-2">
-                        <span className="text-xl">⚠️</span>
-                        <span className="font-medium">{error}</span>
-                        <button
-                            onClick={() => setError(null)}
-                            className="ml-2 text-white hover:text-gray-200"
-                        >
-                            ✕
-                        </button>
+        <div className="fixed inset-0 bg-[#0a0a0c] text-white flex flex-col font-sans selection:bg-blue-500/30">
+
+            {/* Top Navigation Bar */}
+            <header className="p-6 flex justify-between items-center border-b border-white/5 bg-black/20 backdrop-blur-md">
+                <div className="flex items-center gap-4">
+                    <div className="flex flex-col">
+                        <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                            AI LIVE TRANSLATOR
+                        </h2>
+                        <span className="text-[10px] text-gray-500 font-mono tracking-widest uppercase">
+                            {status} • NVIDIA/INTEL GPU ACCELERATED
+                        </span>
                     </div>
                 </div>
-            )}
 
-            <div className="absolute top-8 left-8">
-                <h1 className="text-3xl font-bold text-white mb-1 flex items-center gap-2">
-                    🎤 Live Translation
-                </h1>
-                <p className="text-gray-300 text-sm">
-                    Real-time Speech-to-Text with Whisper
-                </p>
-            </div>
-
-            <div className="absolute top-8 right-8 flex gap-3">
-                <button
-                    onClick={handleSelectFile}
-                    disabled={isTranscribing || isLive}
-                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 rounded-lg text-white font-medium shadow-lg transition-all transform hover:scale-105 disabled:cursor-not-allowed disabled:transform-none"
-                >
-                    📁 Select File
-                </button>
-
-                {selectedFile && !isLive && (
-                    <button
-                        onClick={handleTranscribe}
-                        disabled={isTranscribing}
-                        className="px-5 py-2.5 bg-green-600 hover:bg-green-700 disabled:bg-green-400 rounded-lg text-white font-medium shadow-lg transition-all transform hover:scale-105 disabled:cursor-not-allowed disabled:transform-none"
-                    >
-                        {isTranscribing ? '⏳ Transcribing...' : '▶️ Transcribe'}
-                    </button>
-                )}
-
-                <button
-                    onClick={handleToggleLive}
-                    disabled={isTranscribing}
-                    className={`px-5 py-2.5 rounded-lg text-white font-medium shadow-lg transition-all transform hover:scale-105 disabled:cursor-not-allowed disabled:transform-none ${isLive
-                        ? 'bg-red-600 hover:bg-red-700'
-                        : 'bg-purple-600 hover:bg-purple-700'
-                        }`}
-                >
-                    {isLive ? '⏹ Stop Live' : '🎙️ Start Live'}
-                </button>
-            </div>
-
-            {selectedFile && !isLive && (
-                <div className="absolute top-24 right-8 bg-gray-800/80 backdrop-blur-sm text-white px-4 py-2 rounded-lg text-sm shadow-lg">
-                    <span className="text-gray-400">File: </span>
-                    <span className="font-medium">{selectedFile.split('\\').pop()}</span>
-                </div>
-            )}
-
-            <div className="w-full max-w-6xl flex flex-col gap-4">
-                {captionHistory.length > 0 && (
-                    <div className="bg-black/40 backdrop-blur-md rounded-xl p-4 max-h-48 overflow-y-auto space-y-2">
-                        {captionHistory.map((caption) => (
+                <div className="flex items-center gap-6">
+                    {/* Professional Mic Meter */}
+                    <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Input</span>
+                        <div className="w-32 h-1.5 bg-white/10 rounded-full overflow-hidden">
                             <div
-                                key={caption.id}
-                                className="bg-gray-800/60 rounded-lg px-4 py-2 text-gray-300 text-lg animate-fade-in"
-                            >
-                                {caption.text}
-                            </div>
+                                className="h-full bg-gradient-to-r from-blue-600 via-cyan-400 to-emerald-400 transition-all duration-75"
+                                style={{ width: `${micLevel}%` }}
+                            />
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={isLive ? stopLive : startLive}
+                        className={`px-8 py-2.5 rounded-full font-black text-sm transition-all duration-300 transform active:scale-95 ${isLive
+                            ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_20px_rgba(239,68,68,0.4)]'
+                            : 'bg-white text-black hover:bg-gray-200 shadow-[0_0_20px_rgba(255,255,255,0.2)]'
+                            }`}
+                    >
+                        {isLive ? 'STOP SESSION' : 'START LIVE CAPTIONS'}
+                    </button>
+                </div>
+            </header>
+
+            {/* Main Content Area */}
+            <main className="flex-1 flex flex-col items-center justify-center px-12 pb-24 relative overflow-hidden">
+
+                {/* Background Decorative Element */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-blue-900/10 blur-[120px] rounded-full -z-10"></div>
+
+                <div className="w-full max-w-5xl space-y-8">
+
+                    {/* Subtitle History (Faded) */}
+                    <div className="space-y-4 opacity-30 transition-all duration-700">
+                        {captionHistory.slice(0, -1).map((cap) => (
+                            <p key={cap.id} className="text-3xl font-medium leading-tight">
+                                {cap.text}
+                            </p>
                         ))}
                     </div>
-                )}
 
-                <div className="bg-black/70 backdrop-blur-xl rounded-2xl p-10 shadow-2xl border-2 border-purple-500/30 min-h-[200px] flex items-center justify-center">
-                    {isTranscribing && (
-                        <div className="flex justify-center mb-4">
-                            <div className="flex space-x-2">
-                                <div className="w-3 h-3 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                                <div className="w-3 h-3 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                                <div className="w-3 h-3 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                            </div>
+                    {/* Active Subtitle (Bright) */}
+                    <div className="relative pt-8">
+                        <div className="absolute -top-4 left-0 text-[10px] font-black text-blue-500 tracking-[0.3em] uppercase">
+                            Current Stream
                         </div>
-                    )}
-
-                    <p className="text-white text-4xl font-semibold text-center leading-relaxed">
-                        {currentText || 'Select a file or start live caption...'}
-                    </p>
+                        <p className="text-6xl md:text-7xl font-bold leading-[1.15] tracking-tight bg-gradient-to-b from-white to-gray-400 bg-clip-text text-transparent">
+                            {currentText || (isLive ? "Listening to audio..." : "System Ready.")}
+                        </p>
+                    </div>
                 </div>
-            </div>
+            </main>
 
-            <div className="absolute bottom-8 flex items-center gap-4">
-                {isLive && (
-                    <div className="flex items-center gap-2 bg-red-600/90 backdrop-blur-sm rounded-full px-4 py-2 shadow-lg">
-                        <div className="w-3 h-3 bg-white rounded-full animate-pulse" />
-                        <span className="text-white font-medium">LIVE</span>
-                    </div>
-                )}
+            {/* Error Bar */}
+            {error && (
+                <div className="absolute bottom-0 w-full bg-red-500/90 backdrop-blur-md p-3 text-center text-sm font-bold uppercase tracking-widest animate-slide-up">
+                    ⚠️ SYSTEM ERROR: {error}
+                </div>
+            )}
 
-                {status && (
-                    <div className="bg-gray-800/80 backdrop-blur-sm text-gray-300 rounded-full px-4 py-2 text-sm shadow-lg">
-                        {status}
-                    </div>
-                )}
-            </div>
+            <footer className="p-6 border-t border-white/5 bg-black/20 text-[10px] text-gray-600 font-mono flex justify-between">
+                <div>WHISPER_ENGINE_STABLE_V3</div>
+                <div className="flex gap-4">
+                    <span>LATENCY: ~240MS</span>
+                    <span>GPU_LOAD: 12%</span>
+                </div>
+            </footer>
         </div>
     );
 }

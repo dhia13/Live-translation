@@ -2,21 +2,14 @@
     "name": "live-translation",
     "version": "1.0.0",
     "description": "Live translation with GPU-accelerated Whisper",
-    "main": "electron/dist/main.js",
     "author": "Your Name",
     "license": "MIT",
     "scripts": {
-        "dev": "concurrently \"npm run dev:next\" \"npm run dev:electron\"",
-        "dev:next": "next dev",
-        "dev:electron": "wait-on http://localhost:3000 && tsc -p electron/tsconfig.json && electron .",
-        "build": "npm run build:next && npm run build:electron",
-        "build:next": "next build",
-        "build:electron": "tsc -p electron/tsconfig.json",
-        "package": "npm run build && electron-builder",
-        "package:win": "npm run build && electron-builder --win"
+        "dev": "next dev",
+        "build": "next build",
+        "package": "npm run build"
     },
     "dependencies": {
-        "electron-is-dev": "^2.0.0",
         "mic": "^2.1.2",
         "next": "^14.0.4",
         "react": "^18.2.0",
@@ -28,52 +21,9 @@
         "@types/react": "^18.2.46",
         "autoprefixer": "^10.4.16",
         "concurrently": "^8.2.2",
-        "electron": "^28.1.0",
-        "electron-builder": "^24.9.1",
         "postcss": "^8.4.32",
         "tailwindcss": "^3.4.0",
         "typescript": "^5.3.3",
         "wait-on": "^7.2.0"
-    },
-    "build": {
-        "appId": "com.livetranslation.app",
-        "productName": "LiveTranslation",
-        "directories": {
-            "output": "dist-electron"
-        },
-        "files": [
-            "electron/dist/**/*",
-            "out/**/*",
-            "!node_modules/**/*"
-        ],
-        "extraResources": [
-            {
-                "from": "resources/models",
-                "to": "resources/models"
-            },
-            {
-                "from": "resources/installers",
-                "to": "resources/installers"
-            },
-            {
-                "from": "native/ddl",
-                "to": "native/ddl"
-            },
-            {
-                "from": "native/whisper/build/Release",
-                "to": "native/whisper/build/Release"
-            }
-        ],
-        "win": {
-            "target": [
-                "nsis"
-            ],
-            "icon": "resources/icon.ico"
-        },
-        "nsis": {
-            "oneClick": false,
-            "allowToChangeInstallationDirectory": true,
-            "createDesktopShortcut": true
-        }
     }
 }
