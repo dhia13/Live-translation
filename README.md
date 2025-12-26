@@ -13,8 +13,13 @@ A desktop application built with **Next.js 15** and **Electron** that captures s
 ## Prerequisites
 
 - **Node.js** 18+ and npm
-- **Whisper Model**: Download a Whisper model file (e.g., `ggml-base.bin` or `ggml-medium.bin`)
-- **Whisper Server**: Built `whisper-server.exe` from whisper.cpp (see whisper folder)
+- **Whisper Server** (choose one):
+  - **Option 1**: Python-based server (`wws-cpu/`) - Recommended
+    - Python 3.8+
+    - Faster Whisper model (auto-downloaded on first run)
+  - **Option 2**: C++ server (`whisper/whisper.cpp/`)
+    - Built `whisper-server.exe` from whisper.cpp
+    - Whisper model file (e.g., `ggml-base.bin` or `ggml-medium.bin`)
 
 ## Installation
 
@@ -24,8 +29,26 @@ A desktop application built with **Next.js 15** and **Electron** that captures s
    npm install
    ```
 
-2. **Setup Whisper:**
+2. **Setup Transcription Server:**
 
+   **Option 1: Python Server (Recommended)**
+   
+   ```bash
+   cd wws-cpu
+   python -m venv venv
+   # Windows PowerShell
+   .\venv\Scripts\Activate.ps1
+   # Windows CMD or Linux/Mac
+   # venv\Scripts\activate  (Windows CMD)
+   # source venv/bin/activate  (Linux/Mac)
+   pip install -r requirements.txt
+   python wws.py
+   ```
+   
+   The server will run on `http://localhost:5000` and automatically download the Whisper model on first run.
+   
+   **Option 2: C++ Server**
+   
    - Ensure you have a Whisper model file in `whisper/whisper.cpp/models/`
    - The app will automatically start the whisper-server when transcription begins
 
@@ -80,15 +103,16 @@ This creates a distributable Electron app in the `dist` folder.
 | Layer         | Technology                         | Purpose                               |
 | ------------- | ---------------------------------- | ------------------------------------- |
 | Framework     | Next.js 15 (App Router) + Electron | High-performance desktop UI           |
-| STT Engine    | Whisper (Local)                    | Local transcription using whisper.cpp |
+| STT Engine    | Whisper (Local)                    | Local transcription via Python (Faster Whisper) or C++ (whisper.cpp) |
+| Server        | Python Socket.IO (wws-cpu)         | Real-time transcription server on port 5000 |
 | Audio Capture | Electron `desktopCapturer`         | System audio loopback                 |
-| Styling       | Tailwind CSS                       | Modern, responsive UI                 |
+| Styling       | Tailwind CSS                       | Modern, responsive UI                  |
 
 ## How It Works
 
 1. **Audio Capture**: Uses `navigator.mediaDevices.getDisplayMedia` with audio loopback to capture system audio
-2. **Local Processing**: Audio is processed locally using Whisper via whisper-server.exe
-3. **Real-time Transcription**: Audio chunks are sent to the local Whisper server for transcription
+2. **Local Processing**: Audio is processed locally using Whisper via the transcription server
+3. **Real-time Transcription**: Audio chunks are sent via Socket.IO to the local transcription server (Python server on port 5000 or C++ server on port 8080)
 4. **Display**: Transcribed text appears in the transparent overlay at the bottom of the screen
 
 ## Configuration
@@ -101,9 +125,22 @@ The window is positioned at the bottom of the screen by default. To change this,
 y: height - 120, // Adjust this value to change vertical position
 ```
 
-### Whisper Settings
+### Transcription Server Settings
 
-The app uses `whisper-server.exe` running on `localhost:8080`. To modify settings, edit `electron/main.ts`:
+**Python Server (Default - Port 5000)**
+
+The app connects to the Python server at `http://localhost:5000` via Socket.IO. To modify settings, edit `wws-cpu/wws.py`:
+
+```python
+MODEL_SIZE = "small"  # Options: tiny, base, small, medium, large
+DEVICE = "cpu"        # or "cuda" for GPU
+COMPUTE_TYPE = "int8" # Options: int8, float16, float32
+CHUNK_DURATION = 5.0  # Seconds of audio per chunk
+```
+
+**C++ Server (Alternative - Port 8080)**
+
+The app can also use `whisper-server.exe` running on `localhost:8080`. To modify settings, edit `electron/main.ts`:
 
 ```typescript
 whisperProcess = spawn(exePath, [
@@ -126,6 +163,14 @@ whisperProcess = spawn(exePath, [
 
 ### Transcription Not Working
 
+**For Python Server (Port 5000):**
+- Ensure the Python server is running: `cd wws-cpu && python wws.py`
+- Check that the virtual environment is activated and dependencies are installed
+- Verify the server is listening on `http://localhost:5000`
+- Check the Python server console for error messages
+- Ensure port 5000 is not in use by another application
+
+**For C++ Server (Port 8080):**
 - Verify that whisper-server.exe is built and available
 - Check that the Whisper model file exists in the expected location
 - Check the Electron console for whisper-server startup messages
@@ -147,7 +192,11 @@ native/
 resources/              # Binaries, installers, models
 src/                    # Next.js app (App Router)
 types/                  # Type declarations
-whisper/whisper.cpp/    # Upstream whisper.cpp sources and builds
+whisper/whisper.cpp/    # Upstream whisper.cpp sources and builds (C++ server)
+wws-cpu/                # Python-based transcription server (recommended)
+  wws.py               # Main server file
+  requirements.txt     # Python dependencies
+  README.md            # Server-specific documentation
 ```
 
 ## Security & Privacy
@@ -155,7 +204,8 @@ whisper/whisper.cpp/    # Upstream whisper.cpp sources and builds
 - All transcription happens locally on your device
 - No audio data is sent to external APIs
 - No API keys required
-- All processing happens in your local Electron app
+- All processing happens locally (either in the Python server or C++ server)
+- Audio is transmitted only between the Electron app and local transcription server via Socket.IO
 
 ## License
 
