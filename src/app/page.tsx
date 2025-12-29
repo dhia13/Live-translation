@@ -1,6 +1,5 @@
 'use client';
-import { Card, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import BackgroundOrbs from './components/BackgroundOrbs';
 import CaptionHistory from './components/CaptionHistory';
 import CurrentCaption from './components/CurrentCaption';
@@ -22,6 +21,15 @@ export default function LiveTranslator() {
     // Transcription management
     const { captionHistory, addTranscription, clearHistory } = useTranscription();
 
+    // TTS state
+    const [ttsEnabled, setTTSEnabled] = useState(false);
+    const [ttsVoice, setTTSVoice] = useState('af_heart');
+    const [ttsSpeed, setTTSSpeed] = useState(1.0);
+    const [isPlayingTTS, setIsPlayingTTS] = useState(false);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const audioQueueRef = useRef<string[]>([]);
+    const isProcessingAudioRef = useRef(false);
+
     // Socket connection
     const {
         socket,
@@ -34,9 +42,15 @@ export default function LiveTranslator() {
         detectedLanguage,
         inferenceTime,
         translationTime,
+        ttsTime,
+        ttsAudio,
+        ttsAvailable,
+        voices,
         captionId,
         setError: setSocketError,
         sendTranslationConfig,
+        sendTTSConfig,
+        requestVoices,
     } = useSocket((data: TranscriptionData) => {
         addTranscription(data, captionId.current++);
     });
@@ -73,6 +87,66 @@ export default function LiveTranslator() {
         setTargetLanguage,
         setTranslationEnabled,
     } = useTranslation(isLive, sendTranslationConfig);
+
+    // Initialize AudioContext
+    useEffect(() => {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        return () => {
+            if (audioContextRef.current) {
+                audioContextRef.current.close();
+            }
+        };
+    }, []);
+
+    // Play TTS audio when received
+    const playTTSAudio = useCallback(async (base64Audio: string) => {
+        if (!audioContextRef.current || !base64Audio) return;
+
+        try {
+            // Decode base64 to ArrayBuffer
+            const binaryString = atob(base64Audio);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+
+            // Decode audio data
+            const audioBuffer = await audioContextRef.current.decodeAudioData(bytes.buffer);
+
+            // Create source node
+            const source = audioContextRef.current.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContextRef.current.destination);
+
+            setIsPlayingTTS(true);
+            source.onended = () => setIsPlayingTTS(false);
+            source.start(0);
+        } catch (error) {
+            console.error('Error playing TTS audio:', error);
+            setIsPlayingTTS(false);
+        }
+    }, []);
+
+    // Auto-play TTS audio when received
+    useEffect(() => {
+        if (ttsAudio && ttsEnabled) {
+            playTTSAudio(ttsAudio);
+        }
+    }, [ttsAudio, ttsEnabled, playTTSAudio]);
+
+    // Send TTS config when settings change or when going live
+    useEffect(() => {
+        if (socket?.connected) {
+            sendTTSConfig({ enabled: ttsEnabled, voice: ttsVoice, speed: ttsSpeed });
+        }
+    }, [ttsEnabled, ttsVoice, ttsSpeed, isLive, socket, sendTTSConfig]);
+
+    // Request voices when connected
+    useEffect(() => {
+        if (status === 'Connected') {
+            requestVoices();
+        }
+    }, [status, requestVoices]);
 
     // Monitor connection and auto-stop if disconnected
     useEffect(() => {
@@ -130,27 +204,28 @@ export default function LiveTranslator() {
                     onToggleTranslation={() => setTranslationEnabled(!translationEnabled)}
                     onSourceLanguageChange={setSourceLanguage}
                     onTargetLanguageChange={setTargetLanguage}
+                    // TTS props
+                    ttsEnabled={ttsEnabled}
+                    ttsAvailable={ttsAvailable}
+                    ttsVoice={ttsVoice}
+                    ttsSpeed={ttsSpeed}
+                    voices={voices}
+                    isPlayingTTS={isPlayingTTS}
+                    onToggleTTS={() => setTTSEnabled(!ttsEnabled)}
+                    onTTSVoiceChange={setTTSVoice}
+                    onTTSSpeedChange={setTTSSpeed}
                 />
 
                 <main className="max-w-6xl mx-auto px-6 py-16">
-                    <div className="space-y-8">
+                    <div className="space-y-6">
+                        {/* Save button when there's history */}
                         {captionHistory.length > 0 && (
-                            <Card className="mb-4 bg-zinc-900/50 border-zinc-800">
-                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                    <CardTitle className="text-lg font-semibold text-zinc-100">
-                                        History ({captionHistory.length})
-                                    </CardTitle>
-                                    <SaveDialog captions={captionHistory} targetLanguage={targetLanguage} />
-                                </CardHeader>
-                            </Card>
-                        )}
-                        {captionHistory.slice(0, -1).length > 0 && (
-                            <CaptionHistory
-                                captions={captionHistory.slice(0, -1)}
-                                targetLanguage={targetLanguage}
-                            />
+                            <div className="flex justify-end">
+                                <SaveDialog captions={captionHistory} targetLanguage={targetLanguage} />
+                            </div>
                         )}
 
+                        {/* Current caption - always on top */}
                         <CurrentCaption
                             currentText={currentText}
                             currentTranslation={currentTranslation}
@@ -159,11 +234,21 @@ export default function LiveTranslator() {
                             isLive={isLive}
                         />
 
+                        {/* History stacks below current, fading toward bottom */}
+                        {captionHistory.length > 0 && (
+                            <CaptionHistory
+                                captions={captionHistory}
+                                targetLanguage={targetLanguage}
+                            />
+                        )}
+
                         <StatsPanel
                             isLive={isLive}
                             inferenceTime={inferenceTime}
                             translationTime={translationTime}
+                            ttsTime={ttsTime}
                             translationEnabled={translationEnabled}
+                            ttsEnabled={ttsEnabled}
                             captionCount={captionHistory.length}
                             stats={stats}
                         />

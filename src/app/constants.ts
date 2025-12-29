@@ -23,3 +23,4 @@ export const getLanguageInfo = (code: string | null, languages: Language[] = LAN
     return languages.find(l => l.code === code) || { code: code, name: code || 'Unknown', flag: '🌐' };
 };
 
+

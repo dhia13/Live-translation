@@ -6,7 +6,9 @@ interface StatsPanelProps {
     isLive: boolean;
     inferenceTime: number;
     translationTime: number;
+    ttsTime?: number;
     translationEnabled: boolean;
+    ttsEnabled?: boolean;
     captionCount: number;
     stats: StatsData | null;
 }
@@ -15,7 +17,9 @@ export default function StatsPanel({
     isLive,
     inferenceTime,
     translationTime,
+    ttsTime = 0,
     translationEnabled,
+    ttsEnabled = false,
     captionCount,
     stats,
 }: StatsPanelProps) {
@@ -23,10 +27,13 @@ export default function StatsPanel({
         return null;
     }
 
+    const totalTime = inferenceTime + translationTime + ttsTime;
+
     const statItems = [
         { label: 'Inference', value: `${inferenceTime.toFixed(2)}s`, icon: '⚡' },
         ...(translationEnabled ? [{ label: 'Translation', value: `${translationTime.toFixed(2)}s`, icon: '🌐' }] : []),
-        { label: 'Total Time', value: `${(inferenceTime + translationTime).toFixed(2)}s`, icon: '⏱️' },
+        ...(ttsEnabled ? [{ label: 'TTS', value: `${ttsTime.toFixed(2)}s`, icon: '🔊' }] : []),
+        { label: 'Total Time', value: `${totalTime.toFixed(2)}s`, icon: '⏱️' },
         { label: 'Chunks', value: captionCount, icon: '✓' },
         { label: 'Avg Latency', value: stats ? `${stats.avg_latency.toFixed(2)}s` : '-', icon: '📊' },
     ];

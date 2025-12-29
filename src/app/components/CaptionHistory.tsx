@@ -12,53 +12,54 @@ export default function CaptionHistory({ captions, targetLanguage }: CaptionHist
         return null;
     }
 
-    const totalCaptions = captions.length;
-    const fadeThreshold = Math.max(1, Math.floor(totalCaptions * 0.6)); // Fade items after 60% of history
-    
+    // Reverse to show newest first, then fade older items at the bottom
+    const reversedCaptions = [...captions].reverse();
+    const totalCaptions = reversedCaptions.length;
+
     return (
-        <div className="space-y-3">
-            {captions.map((cap, idx) => {
-                const isOld = idx < totalCaptions - fadeThreshold;
-                const age = totalCaptions - idx - 1;
-                const shouldFade = isOld && age > 0;
-                
+        <div className="relative space-y-3">
+            {/* Fade overlay at bottom */}
+            {totalCaptions > 3 && (
+                <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-zinc-950 via-zinc-950/80 to-transparent pointer-events-none z-10" />
+            )}
+
+            {reversedCaptions.map((cap, idx) => {
+                // Calculate opacity: newest (idx=0) is brightest, older items fade
+                const opacity = Math.max(0.15, 1 - (idx * 0.2));
+                const scale = Math.max(0.95, 1 - (idx * 0.01));
+
                 return (
-                <Card
-                    key={cap.id}
-                    className={`group relative p-6 bg-gradient-to-br from-zinc-900/60 via-zinc-900/50 to-black/60 border-zinc-800/50 backdrop-blur-xl transition-all duration-500 hover:border-zinc-700 hover:bg-zinc-900/70 hover:shadow-lg hover:shadow-black/50 hover:scale-[1.02] animate-slideUp ${
-                        shouldFade ? 'animate-fadeOutOld' : ''
-                    }`}
-                    style={{ 
-                        opacity: shouldFade ? Math.max(0.1, 0.4 - (age * 0.1)) : 0.4 + (idx * 0.15),
-                        animationDelay: `${idx * 50}ms`
-                    }}
-                >
-                    {/* Subtle glow effect on hover */}
-                    <div className="absolute inset-0 bg-gradient-to-r from-violet-500/0 via-cyan-500/0 to-violet-500/0 rounded-2xl opacity-0 group-hover:opacity-10 transition-opacity duration-500" />
-                    
-                    <CardContent className="p-0">
-                        <div className="relative flex items-start gap-3 mb-3">
-                            {cap.language && (
-                                <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center">
-                                    <span className="text-lg">{getLanguageInfo(cap.language).flag}</span>
-                                </div>
-                            )}
-                            <p className="text-xl md:text-2xl text-zinc-200 leading-relaxed flex-1 font-medium">
-                                {cap.text}
-                            </p>
-                        </div>
-                        {cap.translatedText && (
-                            <div className="relative flex items-start gap-3 mt-4 pt-4 border-t border-zinc-800">
-                                <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500/20 to-cyan-500/20 border border-violet-500/30 flex items-center justify-center">
-                                    <span className="text-lg">{getLanguageInfo(targetLanguage).flag}</span>
-                                </div>
-                                <p className="text-lg md:text-xl text-zinc-300 leading-relaxed flex-1">
-                                    {cap.translatedText}
+                    <Card
+                        key={cap.id}
+                        className="group relative p-5 bg-gradient-to-br from-zinc-900/60 via-zinc-900/50 to-black/60 border-zinc-800/50 backdrop-blur-xl transition-all duration-300 hover:border-zinc-700 hover:bg-zinc-900/70"
+                        style={{
+                            opacity,
+                            transform: `scale(${scale})`,
+                        }}
+                    >
+                        <CardContent className="p-0">
+                            <div className="relative flex items-start gap-3">
+                                {cap.language && (
+                                    <div className="flex-shrink-0 w-7 h-7 rounded-lg bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center">
+                                        <span className="text-base">{getLanguageInfo(cap.language).flag}</span>
+                                    </div>
+                                )}
+                                <p className="text-lg md:text-xl text-zinc-200 leading-relaxed flex-1 font-medium">
+                                    {cap.text}
                                 </p>
                             </div>
-                        )}
-                    </CardContent>
-                </Card>
+                            {cap.translatedText && (
+                                <div className="relative flex items-start gap-3 mt-3 pt-3 border-t border-zinc-800/50">
+                                    <div className="flex-shrink-0 w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500/20 to-cyan-500/20 border border-violet-500/30 flex items-center justify-center">
+                                        <span className="text-base">{getLanguageInfo(targetLanguage).flag}</span>
+                                    </div>
+                                    <p className="text-base md:text-lg text-zinc-400 leading-relaxed flex-1">
+                                        {cap.translatedText}
+                                    </p>
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
                 );
             })}
         </div>

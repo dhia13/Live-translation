@@ -1,6 +1,7 @@
+import Link from 'next/link';
 import MicLevelIndicator from './MicLevelIndicator';
 import { Button } from '@/components/ui/button';
-import { Settings } from 'lucide-react';
+import { Settings, Upload } from 'lucide-react';
 
 interface HeaderProps {
     status: string;
@@ -49,6 +50,18 @@ export default function Header({
                 </div>
 
                 <div className="flex items-center gap-3">
+                    {/* Upload button */}
+                    <Link href="/upload">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="relative"
+                            aria-label="Upload File"
+                        >
+                            <Upload className="w-5 h-5" />
+                        </Button>
+                    </Link>
+
                     {/* Settings button */}
                     <Button
                         onClick={onToggleSettings}

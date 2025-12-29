@@ -1,25 +1,25 @@
-# Live Transcription - Real-time Speech-to-Text Overlay
+# Live Transcription & Translation
 
-A desktop application built with **Next.js 15** and **Electron** that captures system audio and transcribes speech using **Whisper** (local transcription).
+A web application built with **Next.js 15** that provides real-time speech-to-text transcription, translation, and text-to-speech using **Whisper**, **Argos Translate**, and **Kokoro TTS**. Fully offline - no external APIs required.
 
 ## Features
 
-- 🎯 **Transparent Overlay**: Always-on-top subtitle bar at the bottom of your screen
-- 🎤 **System Audio Capture**: Captures audio from calls without additional drivers
-- ⚡ **Local Transcription**: Uses Whisper running locally on your device
+- 🎤 **Live Transcription**: Real-time speech-to-text with Whisper AI
+- 🌐 **Live Translation**: Automatic translation to your target language
+- 🔊 **Text-to-Speech**: Hear translations spoken aloud with multiple voice options
+- 📁 **File Upload**: Process audio/video files (MP3, WAV, MP4, WebM) with batch transcription
+- 📝 **Export Options**: Download transcriptions as SRT subtitles or TXT files
+- 🎨 **Modern UI**: Dark theme with shadcn/ui components
 - 🔒 **Privacy-First**: All processing happens locally - no audio sent to external APIs
-- 🎨 **Modern UI**: Built with Tailwind CSS for a clean, minimal interface
 
 ## Prerequisites
 
 - **Node.js** 18+ and npm
-- **Whisper Server** (choose one):
-  - **Option 1**: Python-based server (`wws-cpu/`) - Recommended
-    - Python 3.8+
-    - Faster Whisper model (auto-downloaded on first run)
-  - **Option 2**: C++ server (`whisper/whisper.cpp/`)
-    - Built `whisper-server.exe` from whisper.cpp
-    - Whisper model file (e.g., `ggml-base.bin` or `ggml-medium.bin`)
+- **Python 3.8+** for the backend server
+- **ffmpeg** (required for file upload)
+  - Windows: `winget install ffmpeg`
+  - Linux: `sudo apt install ffmpeg`
+  - Mac: `brew install ffmpeg`
 
 ## Installation
 
@@ -29,107 +29,104 @@ A desktop application built with **Next.js 15** and **Electron** that captures s
    npm install
    ```
 
-2. **Setup Transcription Server:**
+2. **Setup Backend Server:**
 
-   **Option 1: Python Server (Recommended)**
-   
    ```bash
    cd wws-cpu
    python -m venv venv
+
+   # Activate virtual environment:
    # Windows PowerShell
    .\venv\Scripts\Activate.ps1
-   # Windows CMD or Linux/Mac
-   # venv\Scripts\activate  (Windows CMD)
-   # source venv/bin/activate  (Linux/Mac)
+   # Windows CMD
+   venv\Scripts\activate.bat
+   # Linux/Mac
+   source venv/bin/activate
+
    pip install -r requirements.txt
-   python wws.py
    ```
-   
-   The server will run on `http://localhost:5000` and automatically download the Whisper model on first run.
-   
-   **Option 2: C++ Server**
-   
-   - Ensure you have a Whisper model file in `whisper/whisper.cpp/models/`
-   - The app will automatically start the whisper-server when transcription begins
+
+3. **TTS Model Setup (Optional):**
+
+   For text-to-speech, download the Kokoro model files and place them in `wws-cpu/`:
+   - `kokoro-v1.0.int8.onnx`
+   - `voices-v1.0.bin`
+
+   Download from: https://github.com/thewh1teagle/kokoro-onnx/releases
+
+4. **Start the server:**
+
+   ```bash
+   python main.py
+   ```
+
+   The server will run on `http://localhost:5000`
 
 ## Development
 
 ### Run in Development Mode
 
 ```bash
-npm run electron:dev
+npm run dev
 ```
 
-This will:
-
-1. Start the Next.js dev server on `http://localhost:3000`
-2. Compile Electron TypeScript files
-3. Launch the Electron app
+This starts the Next.js dev server on `http://localhost:3000`
 
 ### Build for Production
 
 ```bash
-npm run electron:build
+npm run build
 ```
 
-This creates a distributable Electron app in the `dist` folder.
+This creates a production build in the `.next` folder.
 
 ## Usage
 
-1. **Start the app** - The transparent overlay window will appear at the bottom of your screen
-2. **Click "Start"** - You'll be prompted twice:
-   - First: Select "Share audio" or your screen with audio (for incoming call audio)
-   - Second: Allow microphone access (for your voice)
-3. **Make a WhatsApp call** - The app will automatically:
-   - **Incoming (French → English)**: Capture system audio, transcribe French speech, translate to English, display subtitles
-   - **Outgoing (English → French)**: Capture your microphone, transcribe English, translate to French, speak it aloud via TTS
-4. **You'll see**:
+### Live Transcription
 
-   - Main subtitle: What the French speaker said (translated to English)
-   - Bottom text: Your English speech and its French translation
-   - The French translation of your speech will be spoken aloud
+1. **Open the app** in your browser at `http://localhost:3000`
+2. **Configure settings** - Click the gear icon to set source/target languages and TTS options
+3. **Click "Start Recording"** - Allow microphone access when prompted
+4. **Speak** - Your speech will be transcribed and translated in real-time
+5. **Click "Stop Recording"** when done
 
-5. **Click "Stop"** when done
+### File Upload
+
+1. **Click the upload icon** in the header to go to the upload page
+2. **Drag & drop** or select an audio/video file (MP3, WAV, MP4, WebM)
+3. **Configure processing options**:
+   - Transcription only
+   - Transcription + Translation
+   - Transcription + Translation + TTS
+4. **View results** inline with timestamps
+5. **Download** as SRT subtitles or TXT file
 
 ## Architecture
 
-### The Transparent Bridge
-
-- **Main Process (Electron)**: Handles window transparency, always-on-top behavior, and audio permissions
-- **Renderer Process (Next.js)**: Handles AI logic, UI, and audio processing
-
 ### Tech Stack
 
-| Layer         | Technology                         | Purpose                               |
-| ------------- | ---------------------------------- | ------------------------------------- |
-| Framework     | Next.js 15 (App Router) + Electron | High-performance desktop UI           |
-| STT Engine    | Whisper (Local)                    | Local transcription via Python (Faster Whisper) or C++ (whisper.cpp) |
-| Server        | Python Socket.IO (wws-cpu)         | Real-time transcription server on port 5000 |
-| Audio Capture | Electron `desktopCapturer`         | System audio loopback                 |
-| Styling       | Tailwind CSS                       | Modern, responsive UI                  |
+| Layer         | Technology                 | Purpose                                     |
+| ------------- | -------------------------- | ------------------------------------------- |
+| Framework     | Next.js 15 (App Router)    | React-based web UI                          |
+| STT Engine    | Faster Whisper             | Local transcription via Python              |
+| Translation   | Argos Translate            | Offline translation                         |
+| TTS Engine    | Kokoro ONNX                | Text-to-speech with multiple voices         |
+| Server        | Python Socket.IO + aiohttp | Real-time transcription & REST API          |
+| Styling       | Tailwind CSS + shadcn/ui   | Modern, dark theme UI                       |
 
 ## How It Works
 
-1. **Audio Capture**: Uses `navigator.mediaDevices.getDisplayMedia` with audio loopback to capture system audio
-2. **Local Processing**: Audio is processed locally using Whisper via the transcription server
-3. **Real-time Transcription**: Audio chunks are sent via Socket.IO to the local transcription server (Python server on port 5000 or C++ server on port 8080)
-4. **Display**: Transcribed text appears in the transparent overlay at the bottom of the screen
+1. **Audio Capture**: Uses browser's `navigator.mediaDevices.getUserMedia` for microphone access
+2. **Local Processing**: Audio is processed locally using Faster Whisper
+3. **Real-time Transcription**: Audio chunks are sent via Socket.IO to the local transcription server
+4. **Translation & TTS**: Transcribed text is translated and optionally converted to speech
+5. **Display**: Results appear in the web interface with captions and history
 
 ## Configuration
 
-### Window Position
-
-The window is positioned at the bottom of the screen by default. To change this, edit `electron/main.ts`:
-
-```typescript
-y: height - 120, // Adjust this value to change vertical position
-```
-
 ### Transcription Server Settings
 
-**Python Server (Default - Port 5000)**
-
-The app connects to the Python server at `http://localhost:5000` via Socket.IO. To modify settings, edit `wws-cpu/wws.py`:
+The server configuration is in `wws-cpu/server/config.py`:
 
 ```python
 MODEL_SIZE = "small"  # Options: tiny, base, small, medium, large
@@ -138,65 +135,41 @@ COMPUTE_TYPE = "int8" # Options: int8, float16, float32
 CHUNK_DURATION = 5.0  # Seconds of audio per chunk
 ```
 
-**C++ Server (Alternative - Port 8080)**
-
-The app can also use `whisper-server.exe` running on `localhost:8080`. To modify settings, edit `electron/main.ts`:
-
-```typescript
-whisperProcess = spawn(exePath, [
-  "-m",
-  modelPath,
-  "--ov-e-device",
-  "GPU", // Use GPU acceleration
-  "--port",
-  "8080",
-]);
-```
-
 ## Troubleshooting
 
 ### Audio Not Capturing
 
-- Ensure you've granted screen/audio sharing permissions
-- On Windows, you may need to enable "Share system audio" in the browser prompt
-- Check that audio is outputting through your system speakers
+- Ensure you've granted microphone permissions in your browser
+- Check that your microphone is working and selected as the input device
+- Try refreshing the page and granting permissions again
 
 ### Transcription Not Working
 
-**For Python Server (Port 5000):**
-- Ensure the Python server is running: `cd wws-cpu && python wws.py`
+- Ensure the Python server is running: `cd wws-cpu && python main.py`
 - Check that the virtual environment is activated and dependencies are installed
 - Verify the server is listening on `http://localhost:5000`
 - Check the Python server console for error messages
 - Ensure port 5000 is not in use by another application
 
-**For C++ Server (Port 8080):**
-- Verify that whisper-server.exe is built and available
-- Check that the Whisper model file exists in the expected location
-- Check the Electron console for whisper-server startup messages
-- Ensure port 8080 is not in use by another application
+### File Upload Issues
 
-### Window Not Transparent
+- Ensure ffmpeg is installed and available in your PATH
+- Check that the file is a supported format (MP3, WAV, MP4, WebM)
+- Verify the file is under 200MB
 
-- Ensure you're running the Electron app, not just the Next.js dev server
-- Check that `transparent: true` is set in `electron/main.ts`
-- Some operating systems may have limitations with transparency
-
-## Project Structure (quick view)
+## Project Structure
 
 ```
-configs/                # Build and tooling configs
-electron/               # Electron main & preload + whisper service starter
-native/
-  whisper-addon/ (contents omitted)
-resources/              # Binaries, installers, models
 src/                    # Next.js app (App Router)
-types/                  # Type declarations
-whisper/whisper.cpp/    # Upstream whisper.cpp sources and builds (C++ server)
-wws-cpu/                # Python-based transcription server (recommended)
-  wws.py               # Main server file
-  requirements.txt     # Python dependencies
-  README.md            # Server-specific documentation
+  app/
+    components/         # UI components
+    hooks/              # React hooks
+    upload/             # File upload page
+    page.tsx            # Main live transcription page
+wws-cpu/                # Python transcription server
+  server/               # Server modules
+  main.py               # Server entry point
+  requirements.txt      # Python dependencies
 ```
 
 ## Security & Privacy
@@ -204,8 +177,7 @@ wws-cpu/                # Python-based transcription server (recommended)
 - All transcription happens locally on your device
 - No audio data is sent to external APIs
 - No API keys required
-- All processing happens locally (either in the Python server or C++ server)
-- Audio is transmitted only between the Electron app and local transcription server via Socket.IO
+- Audio is transmitted only between the browser and local transcription server via Socket.IO
 
 ## License
 

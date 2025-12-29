@@ -31,7 +31,9 @@ whisper/whisper.cpp/**/*.dll
 *.swp
 *.swo
 .idea/
-
+*.onnx
+*.bin
+.claude
 # OS
 .DS_Store
 Thumbs.db
