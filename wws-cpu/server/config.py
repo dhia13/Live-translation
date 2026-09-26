@@ -78,6 +78,9 @@ class TTSConfig:
     enabled: bool = True
     model_path: str = "kokoro-v1.0.int8.onnx"
     voices_path: str = "voices-v1.0.bin"
+    # Folder with espeak-ng data. Only needed when the default one is not found
+    # (the bundled espeak-ng rejects data paths longer than about 160 characters).
+    espeak_data_path: Optional[str] = None
     default_voice: str = "af_heart"
     default_speed: float = 1.0
     sample_rate: int = 24000  # Kokoro outputs 24kHz audio
@@ -164,6 +167,8 @@ class Config:
             config.tts.model_path = os.getenv("TTS_MODEL_PATH")
         if os.getenv("TTS_VOICES_PATH"):
             config.tts.voices_path = os.getenv("TTS_VOICES_PATH")
+        if os.getenv("TTS_ESPEAK_DATA_PATH"):
+            config.tts.espeak_data_path = os.getenv("TTS_ESPEAK_DATA_PATH")
         if os.getenv("TTS_DEFAULT_VOICE"):
             config.tts.default_voice = os.getenv("TTS_DEFAULT_VOICE")
         if os.getenv("TTS_DEFAULT_SPEED"):
