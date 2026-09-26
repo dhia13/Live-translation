@@ -12,11 +12,12 @@ from typing import Optional, Tuple, List
 import numpy as np
 
 try:
-    from kokoro_onnx import Kokoro
+    from kokoro_onnx import Kokoro, EspeakConfig
     KOKORO_AVAILABLE = True
 except ImportError:
     KOKORO_AVAILABLE = False
     Kokoro = None
+    EspeakConfig = None
 
 
 @dataclass
@@ -101,7 +102,9 @@ class TTSService:
                     return False
 
                 print(f"TTS: Loading Kokoro model from {model_path}...")
-                self._kokoro = Kokoro(model_path, voices_path)
+                espeak_data_path = getattr(self.config, 'espeak_data_path', None)
+                espeak_config = EspeakConfig(data_path=espeak_data_path) if espeak_data_path else None
+                self._kokoro = Kokoro(model_path, voices_path, espeak_config=espeak_config)
                 self._initialized = True
                 print("TTS: Kokoro model loaded successfully!")
                 return True
