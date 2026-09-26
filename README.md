@@ -1,6 +1,6 @@
 # Live Transcription & Translation
 
-A web application built with **Next.js 15** that provides real-time speech-to-text transcription, translation, and text-to-speech using **Whisper**, **Argos Translate**, and **Kokoro TTS**. Fully offline - no external APIs required.
+A web application built with **Next.js 14** that provides real-time speech-to-text transcription, translation, and text-to-speech using **Whisper**, **Argos Translate**, and **Kokoro TTS**. Fully offline - no external APIs required.
 
 ## Features
 
@@ -107,7 +107,7 @@ This creates a production build in the `.next` folder.
 
 | Layer         | Technology                 | Purpose                                     |
 | ------------- | -------------------------- | ------------------------------------------- |
-| Framework     | Next.js 15 (App Router)    | React-based web UI                          |
+| Framework     | Next.js 14 (App Router)    | React-based web UI                          |
 | STT Engine    | Faster Whisper             | Local transcription via Python              |
 | Translation   | Argos Translate            | Offline translation                         |
 | TTS Engine    | Kokoro ONNX                | Text-to-speech with multiple voices         |
@@ -156,6 +156,15 @@ CHUNK_DURATION = 5.0  # Seconds of audio per chunk
 - Ensure ffmpeg is installed and available in your PATH
 - Check that the file is a supported format (MP3, WAV, MP4, WebM)
 - Verify the file is under 200MB
+
+### Text-to-Speech Crashes the Server
+
+If the server stops with `Error processing file '.../espeak-ng-data/phontab': No such file or directory`,
+the espeak-ng library bundled with Kokoro could not use its data folder. It rejects data paths longer
+than about 160 characters, which happens when the project sits in a deeply nested folder. Copy the
+folder printed by `python -c "import espeakng_loader; print(espeakng_loader.get_data_path())"` to a
+short path (for example `C:\espeak-ng-data` or `/opt/espeak-ng-data`) and start the server with
+`TTS_ESPEAK_DATA_PATH` set to that path.
 
 ## Project Structure
 
