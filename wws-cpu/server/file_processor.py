@@ -326,8 +326,20 @@ class FileProcessor:
                             job.target_language
                         )
 
-                        # Split back and assign
-                        translated_parts = translated_combined.split(SEPARATOR)
+                        # Split back and assign. The model can drop or rewrite the separator,
+                        # so if the parts no longer line up, translate each segment on its own.
+                        translated_parts = translated_combined.split(SEPARATOR.strip())
+                        if len(translated_parts) != len(batch_texts):
+                            translated_parts = [
+                                await loop.run_in_executor(
+                                    None,
+                                    self.translation_service.translate,
+                                    text,
+                                    source_lang,
+                                    job.target_language
+                                )
+                                for text in batch_texts
+                            ]
                         text_idx = 0
                         for seg in batch_segments:
                             if seg.text and text_idx < len(translated_parts):

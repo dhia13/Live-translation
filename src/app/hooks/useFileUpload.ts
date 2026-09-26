@@ -13,7 +13,7 @@ interface UseFileUploadReturn {
     // Actions
     uploadFile: (file: File, config: UploadConfig) => Promise<void>;
     cancelJob: () => void;
-    downloadResult: (format: 'srt' | 'txt') => void;
+    downloadResult: (format: 'srt' | 'txt', type?: 'original' | 'translated') => void;
     getTtsAudioUrl: () => string | null;
     clearJob: () => void;
 }
